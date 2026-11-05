@@ -239,6 +239,14 @@ describe("Copper's rules for answering from the documents", () => {
     expect(rules).toContain('"I couldn\'t find that in our support docs."');
     expect(rules).toContain("Copper Crew");
   });
+
+  it("searches the docs for any question about a Copper product, and says 'can't help' only when it has nothing to do with Copper", async () => {
+    const { COPPER_INSTRUCTIONS: rules } =
+      await import("@/lib/copper/assistant/instructions");
+    expect(rules).toContain("Can Copper Home order me a pizza?");
+    expect(rules).toMatch(/nothing to do with Copper at all/);
+    expect(rules).toMatch(/never "off topic"/);
+  });
 });
 
 describe("citations in Copper's reply", () => {
