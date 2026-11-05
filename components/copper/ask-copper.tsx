@@ -35,6 +35,7 @@ import {
   TOOL_LABELS,
 } from "@/lib/copper/assistant/progress";
 import { formatUsd, getPlans, getProducts } from "@/lib/copper/catalog";
+import { DOCUMENTS } from "@/lib/copper/documents";
 import { cn } from "@/lib/utils";
 
 const STARTERS = [
@@ -385,7 +386,7 @@ function Answer({
             </div>
           )}
           <p className="text-sm whitespace-pre-wrap">
-            {reply}
+            <Cited text={reply} />
             {working && (
               <span className="bg-primary ml-0.5 inline-block h-4 w-0.5 animate-pulse align-middle" />
             )}
@@ -423,6 +424,36 @@ function Station({
       {children}
     </section>
   );
+}
+
+const CITATION = /(\[[^\][]+?,\s*p\.\s*\d+\])/g;
+const CITATION_PARTS = /^\[([^\][]+?),\s*p\.\s*(\d+)\]$/;
+
+/**
+ * Copper's reply, with each citation like [Copper Home User Guide, p. 9]
+ * turned into a link that opens that PDF at that page. The link is built from
+ * our own document list, never from what the model wrote, and a citation that
+ * doesn't match a real document stays plain text.
+ */
+function Cited({ text }: { text: string }) {
+  return text.split(CITATION).map((part, i) => {
+    const match = CITATION_PARTS.exec(part);
+    const doc =
+      match && DOCUMENTS.find((d) => d.title === match[1].trim());
+    if (!match || !doc) return part;
+    return (
+      <a
+        key={i}
+        data-testid="citation"
+        href={`${doc.file}#page=${match[2]}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-primary font-medium underline underline-offset-2"
+      >
+        {part}
+      </a>
+    );
+  });
 }
 
 /** Thought summaries arrive as markdown: render **bold** and `code`. */

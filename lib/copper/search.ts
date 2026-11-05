@@ -53,24 +53,62 @@ function toResult(passage: Passage, score: number): DocResult {
   };
 }
 
-/** The `count` passages closest in meaning to an already-embedded question. */
+// Searching by meaning is fuzzy on exact codes: every error code (C-12, C-31,
+// C-47) "means" nearly the same thing to an embedding. So a code in the
+// question is also matched letter for letter, and a passage that contains it
+// gets a boost. This mix of meaning and exact words is called hybrid search.
+const CODE = /\b[A-Za-z]{1,3}-\d{1,4}\b/g;
+export const CODE_BOOST = 0.2;
+
+/** Codes like "C-31" in a question, upper-cased and without repeats. */
+export function codesIn(question: string): string[] {
+  return [...new Set((question.match(CODE) ?? []).map((c) => c.toUpperCase()))];
+}
+
+function exactCodeBoost(codes: string[], text: string): number {
+  const upper = text.toUpperCase();
+  return codes.reduce(
+    (sum, code) =>
+      new RegExp(`(?<![A-Z0-9-])${code}(?![A-Z0-9-])`).test(upper)
+        ? sum + CODE_BOOST
+        : sum,
+    0,
+  );
+}
+
+/**
+ * The `count` best passages for a question that is already embedded: closest
+ * in meaning, plus a boost for passages that contain a code from `question`.
+ */
 export function closestPassages(
   questionEmbedding: number[],
   passages: Passage[] = PASSAGES,
   count = RESULT_COUNT,
+  question = "",
 ): DocResult[] {
+  const codes = codesIn(question);
   return passages
-    .map((p) => ({ p, score: cosineSimilarity(questionEmbedding, p.embedding) }))
+    .map((p) => ({
+      p,
+      score: Math.min(
+        1,
+        cosineSimilarity(questionEmbedding, p.embedding) +
+          exactCodeBoost(codes, p.text),
+      ),
+    }))
     .sort((a, b) => b.score - a.score)
     .slice(0, count)
     .map(({ p, score }) => toResult(p, score));
 }
 
-/** search_docs: embeds the question and returns the 5 closest passages. */
+/** search_docs: embeds the question and returns the 5 best passages. */
 export async function searchDocs(question: string): Promise<DocSearch> {
   const { embeddings } = await callEmbed(
     { module: 3, feature: "search-docs" },
     { values: [question], task: "query" },
   );
-  return { question, results: closestPassages(embeddings[0]) };
+  return {
+    question,
+    results: closestPassages(embeddings[0], PASSAGES, RESULT_COUNT, question),
+  };
 }

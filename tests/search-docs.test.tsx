@@ -18,6 +18,7 @@ import { DOCUMENTS } from "@/lib/copper/documents";
 import { PASSAGES, type Passage } from "@/lib/copper/passages";
 import {
   closestPassages,
+  codesIn,
   cosineSimilarity,
   pdfLink,
   RESULT_COUNT,
@@ -68,6 +69,44 @@ describe("finding the closest passages", () => {
     expect(results[0].score).toBeGreaterThan(results[1].score);
   });
 
+  it("finds codes like C-31 in a question, ignoring case and repeats", () => {
+    expect(
+      codesIn('What does "c-31" mean? C-31 on Copper Notes, and C-12?'),
+    ).toEqual(["C-31", "C-12"]);
+    expect(codesIn("annual refund")).toEqual([]);
+  });
+
+  it("puts the passage with the exact code first even when another is closer in meaning", () => {
+    const withCode: Passage = {
+      id: "code",
+      documentId: "copper-notes-user-guide",
+      title: "Copper Notes User Guide",
+      page: 8,
+      text: "Copper Notes User Guide\n\nC-31 Storage full: recordings haven't been uploaded yet.",
+      embedding: [1, 1],
+    };
+    const lookalike: Passage = {
+      ...withCode,
+      id: "other",
+      page: 4,
+      text: "Copper Notes User Guide\n\nError C-312 or C-3 means something else.",
+      embedding: [1, 0.5],
+    };
+    const results = closestPassages(
+      [1, 0],
+      [lookalike, withCode],
+      5,
+      'What does "C-31" mean on Copper Notes?',
+    );
+    expect(results.map((r) => r.page)).toEqual([8, 4]);
+    // Without the code in the question, meaning alone decides.
+    expect(
+      closestPassages([1, 0], [lookalike, withCode], 5, "storage").map(
+        (r) => r.page,
+      ),
+    ).toEqual([4, 8]);
+  });
+
   it("links to the PDF at the right page", () => {
     for (const doc of DOCUMENTS) {
       expect(pdfLink(doc.id, 7)).toBe(`${doc.file}#page=7`);
@@ -109,9 +148,8 @@ describe("the search_docs tool", () => {
   });
 
   it("tells Copper to use it for setup, troubleshooting, warranty and policy questions", async () => {
-    const { COPPER_INSTRUCTIONS } = await import(
-      "@/lib/copper/assistant/instructions"
-    );
+    const { COPPER_INSTRUCTIONS } =
+      await import("@/lib/copper/assistant/instructions");
     expect(COPPER_INSTRUCTIONS).toContain("search_docs");
     for (const topic of ["setup", "troubleshooting", "warranty", "policy"]) {
       expect(COPPER_INSTRUCTIONS).toContain(topic);
@@ -125,7 +163,11 @@ describe("the search_docs tool card", () => {
     const results = [
       ["copper-home-user-guide", "Copper Home User Guide", 9],
       ["copper-plus-faq", "Copper Plus FAQ", 5],
-      ["copper-terms-and-conditions", "Copper State Labs Terms and Conditions", 4],
+      [
+        "copper-terms-and-conditions",
+        "Copper State Labs Terms and Conditions",
+        4,
+      ],
       ["copper-notes-user-guide", "Copper Notes User Guide", 4],
       ["copper-home-user-guide", "Copper Home User Guide", 4],
     ].map(([documentId, title, page], i) => ({
@@ -186,39 +228,110 @@ describe("the search_docs tool card", () => {
   });
 });
 
+describe("Copper's rules for answering from the documents", () => {
+  it("answers only from search_docs, cites every sentence in one format, and has an exact 'not found' line", async () => {
+    const { COPPER_INSTRUCTIONS: rules } =
+      await import("@/lib/copper/assistant/instructions");
+    expect(rules).toMatch(/ONLY from the passages search_docs returns/);
+    expect(rules).toMatch(/never guess/i);
+    expect(rules).toMatch(/Cite every sentence/);
+    expect(rules).toContain("[Copper Home User Guide, p. 9]");
+    expect(rules).toContain('"I couldn\'t find that in our support docs."');
+    expect(rules).toContain("Copper Crew");
+  });
+});
+
+describe("citations in Copper's reply", () => {
+  async function chatWithReply(reply: string) {
+    vi.stubEnv("GOOGLE_GENERATIVE_AI_API_KEY", "AIza-test-key");
+    const done = createLive<Progress>();
+    done.done({ steps: [], reply, status: "done" });
+    vi.doMock("@/lib/copper/assistant/ask", () => ({
+      askCopper: vi.fn().mockResolvedValue({ progress: done.live }),
+    }));
+    vi.resetModules();
+    const { default: Home } = await import("@/app/page");
+    const page = Home as unknown as () => Promise<React.ReactNode>;
+    render(<>{await page()}</>);
+    fireEvent.click(screen.getByTestId("ask-copper-launcher"));
+    const chat = within(await screen.findByTestId("ask-copper"));
+    fireEvent.change(chat.getByRole("textbox"), { target: { value: "Hi" } });
+    fireEvent.click(chat.getByRole("button", { name: /send/i }));
+    return chat;
+  }
+
+  it("each [Title, p. N] becomes a link that opens that PDF at that page", async () => {
+    const chat = await chatWithReply(
+      "Unplug it for 30 seconds [Copper Home User Guide, p. 9]. Refunds take 14 days [Copper Plus FAQ, p. 5][Copper State Labs Terms and Conditions, p. 4].",
+    );
+    const links = await chat.findAllByTestId("citation");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/docs/copper-home-user-guide.pdf#page=9",
+      "/docs/copper-plus-faq.pdf#page=5",
+      "/docs/copper-terms-and-conditions.pdf#page=4",
+    ]);
+    expect(links[0]).toHaveTextContent("[Copper Home User Guide, p. 9]");
+  });
+
+  it("leaves a citation to a document that doesn't exist as plain text", async () => {
+    const chat = await chatWithReply("Made up [Secret Manual, p. 3].");
+    await chat.findByText(/Made up \[Secret Manual, p\. 3\]\./);
+    expect(chat.queryAllByTestId("citation")).toHaveLength(0);
+  });
+});
+
 // A real call to Google, only when a key is set.
 if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 const live = Boolean(process.env.GOOGLE_GENERATIVE_AI_API_KEY);
 
-describe.skipIf(!live)("search_docs on the real documents (live Google key)", () => {
-  async function top(question: string) {
-    const { searchDocs } = await import("@/lib/copper/search");
-    const { results } = await searchDocs(question);
-    expect(results).toHaveLength(5);
-    return results;
-  }
+describe.skipIf(!live)(
+  "search_docs on the real documents (live Google key)",
+  () => {
+    async function top(question: string) {
+      const { searchDocs } = await import("@/lib/copper/search");
+      const { results } = await searchDocs(question);
+      expect(results).toHaveLength(5);
+      return results;
+    }
 
-  it("C-47 finds the error code in the Copper Home guide first", async () => {
-    const [first] = await top("C-47");
-    expect(first.documentId).toBe("copper-home-user-guide");
-    expect(first.text).toContain("C-47");
-  }, 60_000);
+    it("C-47 finds the error code in the Copper Home guide first", async () => {
+      const [first] = await top("C-47");
+      expect(first.documentId).toBe("copper-home-user-guide");
+      expect(first.text).toContain("C-47");
+    }, 60_000);
 
-  it("annual refund finds the refund rules", async () => {
-    const results = await top("annual refund");
-    expect(results[0].text.toLowerCase()).toContain("refund");
-    expect(
-      results.some((r) =>
-        ["copper-plus-faq", "copper-terms-and-conditions"].includes(
-          r.documentId,
+    it('"What does "C-31" mean on Copper Notes?" finds page 8 of the Copper Notes guide', async () => {
+      const results = await top('What does "C-31" mean on Copper Notes?');
+      // Page 8's error table is in the 5 results, with the exact code.
+      expect(
+        results.some(
+          (r) =>
+            r.documentId === "copper-notes-user-guide" &&
+            r.page === 8 &&
+            r.text.includes("C-31 Storage full"),
         ),
-      ),
-    ).toBe(true);
-  }, 60_000);
+      ).toBe(true);
+      // Every result that has the code ranks above those that don't.
+      const hasCode = results.map((r) => r.text.includes("C-31"));
+      expect(hasCode.slice(0, 2)).toEqual([true, true]);
+    }, 60_000);
 
-  it("reset Wi-Fi finds the Wi-Fi steps in a user guide", async () => {
-    const [first] = await top("reset Wi-Fi");
-    expect(first.documentId).toMatch(/user-guide$/);
-    expect(first.text).toMatch(/wi-?fi/i);
-  }, 60_000);
-});
+    it("annual refund finds the refund rules", async () => {
+      const results = await top("annual refund");
+      expect(results[0].text.toLowerCase()).toContain("refund");
+      expect(
+        results.some((r) =>
+          ["copper-plus-faq", "copper-terms-and-conditions"].includes(
+            r.documentId,
+          ),
+        ),
+      ).toBe(true);
+    }, 60_000);
+
+    it("reset Wi-Fi finds the Wi-Fi steps in a user guide", async () => {
+      const [first] = await top("reset Wi-Fi");
+      expect(first.documentId).toMatch(/user-guide$/);
+      expect(first.text).toMatch(/wi-?fi/i);
+    }, 60_000);
+  },
+);
