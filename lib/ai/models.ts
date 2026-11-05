@@ -22,6 +22,14 @@ export type ModelId = (typeof MODELS)[number]["id"];
  */
 export const DEFAULT_MODEL: ModelId = "google/gemini-2.5-flash";
 
+/**
+ * The model that turns text into embeddings (lists of numbers that capture
+ * meaning), used to find the passages that match a question. Each embedding is
+ * cut down to EMBEDDING_DIMENSIONS numbers to keep the saved file small.
+ */
+export const EMBEDDING_MODEL = "gemini-embedding-001";
+export const EMBEDDING_DIMENSIONS = 768;
+
 /** AI_MODEL if it names an approved model, otherwise the default. */
 export function defaultModel(): ModelId {
   const id = process.env.AI_MODEL;

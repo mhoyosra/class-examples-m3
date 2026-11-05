@@ -11,6 +11,7 @@ import {
   type ProductId,
 } from "@/lib/copper/catalog";
 import { readInventory } from "@/lib/copper/inventory";
+import { searchDocs } from "@/lib/copper/search";
 
 export type ProductList = {
   products: {
@@ -200,5 +201,19 @@ export const copperTools = {
       "Checks today's stock for a Copper product, for every color or just one.",
     inputSchema: checkAvailabilityInput,
     execute: async (input) => checkAvailability(input),
+  }),
+  // Module 3: answers from the customer documents instead of from memory.
+  search_docs: tool({
+    description:
+      "Searches Copper's user guides, Terms and Conditions and Copper Plus FAQ for setup, troubleshooting, warranty, refund, privacy and other policy questions. Returns the 5 closest passages, each with its document title, page number and a link that opens the PDF at that page.",
+    inputSchema: z.object({
+      question: z
+        .string()
+        .min(2)
+        .describe(
+          "The customer's question or key words, e.g. 'reset Wi-Fi on Copper Home'",
+        ),
+    }),
+    execute: async ({ question }) => searchDocs(question),
   }),
 };

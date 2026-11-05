@@ -9,6 +9,7 @@ import {
   ArrowRightIcon,
   ArrowUpIcon,
   BrainIcon,
+  ExternalLinkIcon,
   MessageCircleIcon,
   TriangleAlertIcon,
   WrenchIcon,
@@ -148,7 +149,8 @@ export function AskCopper({ aiConfigured }: { aiConfigured: boolean }) {
                   Ask Copper
                 </SheetTitle>
                 <SheetDescription className="text-xs text-white/70">
-                  Prices, totals and stock, checked with tools.
+                  Prices, stock and answers from our guides, checked with
+                  tools.
                 </SheetDescription>
               </div>
               <SheetClose asChild>
@@ -583,6 +585,33 @@ function ToolOutput({ name, output }: { name: string; output: any }) {
             </div>
           ))}
       </div>
+    );
+  if (name === "search_docs" && Array.isArray(output?.results))
+    return (
+      <ol data-testid="doc-results" className="space-y-3 text-xs">
+        {output.results.map((r: any, i: number) => (
+          <li key={`${r.documentId}-${r.page}-${i}`} className="space-y-1">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-semibold">{r.title}</span>
+              <span className="text-muted-foreground font-mono">
+                {Math.round(r.score * 100)}% match
+              </span>
+            </div>
+            <a
+              href={r.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary inline-flex items-center gap-1 font-medium underline underline-offset-2"
+            >
+              Open page {r.page}
+              <ExternalLinkIcon className="size-3" />
+            </a>
+            <p className="text-muted-foreground line-clamp-3 border-l-2 pl-2">
+              {r.text}
+            </p>
+          </li>
+        ))}
+      </ol>
     );
   if (name === "check_availability" && output?.status) {
     if (output.status === "unavailable")

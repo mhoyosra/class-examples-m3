@@ -96,3 +96,30 @@ each step. Module 3 teaches it to answer from the customer documents.
 | Instructions | `lib/copper/assistant/instructions.ts` | `COPPER_INSTRUCTIONS`. Copper says it can't help yet with warranty, setup, troubleshooting or privacy |
 | Data | `lib/copper/inventory.ts`, `lib/copper/documents.ts` | Stock from `lib/copper/data/inventory.json`; `DOCUMENTS`: the four customer documents and their PDF paths under `public/docs/`. The PDFs are added in class |
 | AI calls | `{ module: 2, feature: "ask-copper" }` | One streamed call per question |
+
+## Module 3 part 1: document passages (RAG, step 1)
+
+**Summary:** The four customer PDFs in `public/docs/` are cut into short
+passages and turned into embeddings (lists of numbers that capture meaning), so
+Ask Copper can later find the passages that match a question.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Script | `scripts/build-passages.ts` (`npm run build-passages`) | Reads each PDF page by page, splits it into passages of about three sentences, embeds them, and saves `lib/copper/data/passages.json`. Re-run it when a PDF changes |
+| Splitter | `lib/copper/split.ts` | `splitPage()`: a page's sentences in groups of three, each passage starting with the document title. Passages never cross a page |
+| Data | `lib/copper/data/passages.json`, `lib/copper/passages.ts` | `PASSAGES`: each passage's id, document, title, page, text and embedding. Importing it loads the whole file into memory when the app starts |
+| AI calls | `callEmbed()` in `lib/ai/call.ts`, `{ module: 3, feature: "embed-passages" }` | `gemini-embedding-001`, 768 numbers per passage. Sent in batches of 90 because Google's free tier allows 100 embeddings a minute |
+
+## Module 3 part 2: search_docs
+
+**Summary:** Ask Copper has a fifth tool, `search_docs`, that answers setup,
+troubleshooting, warranty and policy questions from the customer documents
+instead of from memory.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Search | `lib/copper/search.ts` | `searchDocs(question)`: embeds the question (as a query), compares it to every passage by cosine similarity, and returns the 5 closest, each with document title, page, text, score and a link that opens the PDF at that page (`/docs/<id>.pdf#page=N`) |
+| Tool | `lib/copper/assistant/tools.ts` | `search_docs`, described to the model for setup, troubleshooting, warranty, refund and privacy questions |
+| Instructions | `lib/copper/assistant/instructions.ts` | Copper must call `search_docs` for those questions, answer only from what it returns, and name the document and page |
+| Tool card | `components/copper/ask-copper.tsx` | Lists the 5 passages with title, match percentage, an "Open page N" link and a snippet |
+| AI calls | `{ module: 3, feature: "search-docs" }` | One embedding call per search, plus the usual `ask-copper` call |
