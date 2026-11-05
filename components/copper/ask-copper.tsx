@@ -150,8 +150,7 @@ export function AskCopper({ aiConfigured }: { aiConfigured: boolean }) {
                   Ask Copper
                 </SheetTitle>
                 <SheetDescription className="text-xs text-white/70">
-                  Prices, stock and answers from our guides, checked with
-                  tools.
+                  Prices, stock and answers from our guides, checked with tools.
                 </SheetDescription>
               </div>
               <SheetClose asChild>
@@ -426,32 +425,47 @@ function Station({
   );
 }
 
-const CITATION = /(\[[^\][]+?,\s*p\.\s*\d+\])/g;
-const CITATION_PARTS = /^\[([^\][]+?),\s*p\.\s*(\d+)\]$/;
+const BRACKET = /(\[[^\][]*\bp\.\s*\d+[^\][]*\])/g;
+const ONE_CITATION = /([^,;[\]]+?),\s*p\.\s*(\d+)/g;
 
 /**
  * Copper's reply, with each citation like [Copper Home User Guide, p. 9]
- * turned into a link that opens that PDF at that page. The link is built from
- * our own document list, never from what the model wrote, and a citation that
- * doesn't match a real document stays plain text.
+ * turned into a link that opens that PDF at that page. A bracket that holds
+ * several, like [FAQ, p. 5, Terms, p. 4], becomes one link each. The link is
+ * built from our own document list, never from what the model wrote, and a
+ * citation that doesn't match a real document stays plain text.
  */
 function Cited({ text }: { text: string }) {
-  return text.split(CITATION).map((part, i) => {
-    const match = CITATION_PARTS.exec(part);
-    const doc =
-      match && DOCUMENTS.find((d) => d.title === match[1].trim());
-    if (!match || !doc) return part;
+  return text.split(BRACKET).map((part, i) => {
+    if (!part.startsWith("[")) return part;
+    const inside = part.slice(1, -1);
+    const found = [...inside.matchAll(ONE_CITATION)].map((m) => ({
+      title: m[1].trim(),
+      page: m[2],
+      doc: DOCUMENTS.find((d) => d.title === m[1].trim()),
+    }));
+    // Only link a bracket that is nothing but real citations.
+    const rest = inside.replace(ONE_CITATION, "").replace(/[\s,;]/g, "");
+    if (found.length === 0 || rest || found.some((c) => !c.doc)) return part;
     return (
-      <a
-        key={i}
-        data-testid="citation"
-        href={`${doc.file}#page=${match[2]}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-primary font-medium underline underline-offset-2"
-      >
-        {part}
-      </a>
+      <span key={i}>
+        [
+        {found.map((c, n) => (
+          <span key={n}>
+            {n > 0 && "; "}
+            <a
+              data-testid="citation"
+              href={`${c.doc!.file}#page=${c.page}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary font-medium underline underline-offset-2"
+            >
+              {c.title}, p. {c.page}
+            </a>
+          </span>
+        ))}
+        ]
+      </span>
     );
   });
 }

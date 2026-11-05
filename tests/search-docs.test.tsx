@@ -278,7 +278,18 @@ describe("citations in Copper's reply", () => {
       "/docs/copper-plus-faq.pdf#page=5",
       "/docs/copper-terms-and-conditions.pdf#page=4",
     ]);
-    expect(links[0]).toHaveTextContent("[Copper Home User Guide, p. 9]");
+    expect(links[0]).toHaveTextContent("Copper Home User Guide, p. 9");
+  });
+
+  it("links every citation when the model puts several in one bracket", async () => {
+    const chat = await chatWithReply(
+      "Annual plans get a refund within 14 days [Copper Plus FAQ, p. 5, Copper State Labs Terms and Conditions, p. 4].",
+    );
+    const links = await chat.findAllByTestId("citation");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual([
+      "/docs/copper-plus-faq.pdf#page=5",
+      "/docs/copper-terms-and-conditions.pdf#page=4",
+    ]);
   });
 
   it("leaves a citation to a document that doesn't exist as plain text", async () => {
